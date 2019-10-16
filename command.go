@@ -2,6 +2,7 @@ package split
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -99,7 +100,8 @@ func (c *Command) Env() []string {
 }
 
 // RunContext ...
-func (c *Command) RunContext(ctx context.Context, info chan<- string) (e error) {
+func (c *Command) RunContext(ctx context.Context, info chan<- []byte) (e error) {
+	defer close(info)
 	_, e = exec.LookPath(c.CMD())
 	if e != nil {
 		return e
@@ -136,7 +138,10 @@ func (c *Command) RunContext(ctx context.Context, info chan<- string) (e error) 
 			}
 			if strings.TrimSpace(string(lines)) != "" {
 				if info != nil {
-					info <- string(lines)
+					ll := bytes.Split(lines, []byte{'\r'})
+					for _, line := range ll {
+						info <- bytes.TrimSpace(line)
+					}
 				}
 			}
 		}
@@ -147,6 +152,6 @@ END:
 	if e != nil {
 		return e
 	}
-	close(info)
+
 	return nil
 }

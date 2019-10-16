@@ -36,6 +36,7 @@ type Argument struct {
 	probe           func(string) (*StreamFormat, error)
 	BitRate         int64
 	FrameRate       float64
+	ShowLog         bool
 }
 
 // FFmpegContext ...
@@ -116,18 +117,24 @@ func FFmpegContext() Context {
 	}
 }
 
-// SplitOptions ...
-type SplitOptions func(args *Argument)
+// ArgumentOptions ...
+type ArgumentOptions func(args *Argument)
 
 // HLSTimeOption ...
-func HLSTimeOption(i int) SplitOptions {
+func HLSTimeOption(i int) ArgumentOptions {
 	return func(args *Argument) {
 		args.HLSTime = i
 	}
 }
 
+func ShowLogOption(b bool) ArgumentOptions {
+	return func(args *Argument) {
+		args.ShowLog = b
+	}
+}
+
 // ScaleOption ...
-func ScaleOption(s int64, v ...string) SplitOptions {
+func ScaleOption(s int64, v ...string) ArgumentOptions {
 	return func(args *Argument) {
 		args.Video = "libx264"
 		for _, value := range v {
@@ -138,56 +145,56 @@ func ScaleOption(s int64, v ...string) SplitOptions {
 }
 
 // OutputOption ...
-func OutputOption(s string) SplitOptions {
+func OutputOption(s string) ArgumentOptions {
 	return func(args *Argument) {
 		args.Output = s
 	}
 }
 
 // AutoOption ...
-func AutoOption(s bool) SplitOptions {
+func AutoOption(s bool) ArgumentOptions {
 	return func(args *Argument) {
 		args.Auto = s
 	}
 }
 
 // VideoOption ...
-func VideoOption(s string) SplitOptions {
+func VideoOption(s string) ArgumentOptions {
 	return func(args *Argument) {
 		args.Video = s
 	}
 }
 
 // AudioOption ...
-func AudioOption(s string) SplitOptions {
+func AudioOption(s string) ArgumentOptions {
 	return func(args *Argument) {
 		args.Video = s
 	}
 }
 
 // StreamFormatOption ...
-func StreamFormatOption(s *StreamFormat) SplitOptions {
+func StreamFormatOption(s *StreamFormat) ArgumentOptions {
 	return func(args *Argument) {
 		args.StreamFormat = s
 	}
 }
 
 // BitRateOption ...
-func BitRateOption(b int64) SplitOptions {
+func BitRateOption(b int64) ArgumentOptions {
 	return func(args *Argument) {
 		args.BitRate = b
 	}
 }
 
 // ProbeInfoOption ...
-func ProbeInfoOption(f func(string) (*StreamFormat, error)) SplitOptions {
+func ProbeInfoOption(f func(string) (*StreamFormat, error)) ArgumentOptions {
 	return func(args *Argument) {
 		args.probe = f
 	}
 }
 
 // FFMpegSplitToM3U8WithProbe ...
-func FFMpegSplitToM3U8WithProbe(ctx context.Context, file string, args ...SplitOptions) (sa *Argument, e error) {
+func FFMpegSplitToM3U8WithProbe(ctx context.Context, file string, args ...ArgumentOptions) (sa *Argument, e error) {
 	args = append(args, ProbeInfoOption(FFProbeStreamFormat))
 	return FFMpegSplitToM3U8(ctx, file, args...)
 }
@@ -229,11 +236,10 @@ func outputScale(sa *Argument) string {
 	if sa.BitRate != 0 {
 		outputs = append(outputs, fmt.Sprintf(bitRateOutputTemplate, sa.BitRate/1024))
 	}
-	log.Info(sa.FrameRate)
 	if sa.FrameRate > 0 {
 		outputs = append(outputs, fmt.Sprintf(frameRateOutputTemplate, sa.FrameRate))
 	}
-	log.Info("output:", strings.Join(outputs, " "))
+	log.With("args", strings.Join(outputs, " ")).Info("info")
 	return strings.Join(outputs, " ")
 }
 
@@ -261,7 +267,6 @@ func optimizeScale(sa *Argument, video *Stream) {
 				sa.BitRate = 0
 			}
 		}
-		log.Info(video.RFrameRate)
 		fr := strings.Split(video.RFrameRate, "/")
 		il := 1
 		ir := 1
@@ -280,7 +285,7 @@ func optimizeScale(sa *Argument, video *Stream) {
 		if sa.FrameRate == 0 {
 			sa.FrameRate = frameRateList[idx]
 		}
-		log.Info(sa.FrameRate, il, ir, il/ir)
+		log.With("framerate", sa.FrameRate, "rateLeft", il, "rateRight", ir, "left/right", il/ir).Info("info")
 		if sa.FrameRate > 0 {
 			if sa.FrameRate > float64(il)/float64(ir) {
 				sa.FrameRate = 0
@@ -290,13 +295,13 @@ func optimizeScale(sa *Argument, video *Stream) {
 }
 
 // FFMpegSplitToM3U8WithOptimize ...
-func FFMpegSplitToM3U8WithOptimize(ctx context.Context, file string, args ...SplitOptions) (sa *Argument, e error) {
+func FFMpegSplitToM3U8WithOptimize(ctx context.Context, file string, args ...ArgumentOptions) (sa *Argument, e error) {
 	args = append(args, ProbeInfoOption(FFProbeStreamFormat))
 	return FFMpegSplitToM3U8(ctx, file, args...)
 }
 
 // FFMpegSplitToM3U8 ...
-func FFMpegSplitToM3U8(ctx context.Context, file string, args ...SplitOptions) (sa *Argument, e error) {
+func FFMpegSplitToM3U8(ctx context.Context, file string, args ...ArgumentOptions) (sa *Argument, e error) {
 	if strings.Index(file, " ") != -1 {
 		return nil, errors.New("file name cannot have spaces")
 	}
@@ -318,6 +323,7 @@ func FFMpegSplitToM3U8(ctx context.Context, file string, args ...SplitOptions) (
 		probe:           nil,
 		BitRate:         0,
 		FrameRate:       0,
+		ShowLog:         true,
 	}
 	for _, o := range args {
 		o(sa)
@@ -326,7 +332,7 @@ func FFMpegSplitToM3U8(ctx context.Context, file string, args ...SplitOptions) (
 	if sa.probe != nil {
 		sa.StreamFormat, e = sa.probe(file)
 		if e != nil {
-			return nil, e
+			return nil, fmt.Errorf("%w", e)
 		}
 	}
 	if sa.StreamFormat != nil {
@@ -350,9 +356,9 @@ func FFMpegSplitToM3U8(ctx context.Context, file string, args ...SplitOptions) (
 
 	sa.Output, e = filepath.Abs(sa.Output)
 	if e != nil {
-		return nil, e
+		return nil, fmt.Errorf("%w", e)
 	}
-	log.With("output", sa.Output).Info("output dir")
+	log.With("path", sa.Output).Info("info")
 	if sa.Auto {
 		sa.Output = filepath.Join(sa.Output, uuid.New().String())
 		_ = os.MkdirAll(sa.Output, os.ModePerm)
@@ -366,31 +372,37 @@ func FFMpegSplitToM3U8(ctx context.Context, file string, args ...SplitOptions) (
 		tpl = fmt.Sprintf(sliceM3u8ScaleTemplate, file, sa.Video, sa.Audio, outputScale(sa), sa.HLSTime, sfn, m3u8)
 	}
 
-	if err := FFMpegRun(ctx, tpl); err != nil {
-		return nil, err
+	var runLog chan []byte
+	if sa.ShowLog {
+		runLog = make(chan []byte)
 	}
-	return sa, nil
-}
-
-// FFMpegRun ...
-func FFMpegRun(ctx context.Context, args string) (e error) {
-	f := NewFFMpeg()
-	f.SetArgs(args)
-	info := make(chan string, 4096)
 	wg := sync.WaitGroup{}
-	go func(wg *sync.WaitGroup) {
-		wg.Done()
-		if err := f.RunContext(ctx, info); err != nil {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := FFMpegRun(ctx, runLog, tpl); err != nil {
 			log.With("error", err).Info("end")
 			e = err
 		}
-	}(&wg)
-
-	for msg := range info {
-		if msg != "" {
-			log.With("message", msg).Info("process")
+	}()
+	for msg := range runLog {
+		m := string(msg)
+		if m != "" {
+			log.With("message", m).Info("process")
 		}
 	}
+
 	wg.Wait()
-	return
+	return sa, e
+}
+
+// FFMpegRun ...
+func FFMpegRun(ctx context.Context, output chan<- []byte, args string) (e error) {
+	f := NewFFMpeg()
+	f.SetArgs(args)
+	if err := f.RunContext(ctx, output); err != nil {
+
+		return err
+	}
+	return nil
 }
